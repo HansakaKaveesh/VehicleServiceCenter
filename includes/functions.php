@@ -18,12 +18,20 @@ function require_login() {
     }
 }
 
-function require_admin() {
+function require_role(...$roles) {
     require_login();
-    if ($_SESSION['user_role'] !== 'admin') {
+    if (!in_array($_SESSION['user_role'] ?? '', $roles, true)) {
         http_response_code(403);
-        die('Access denied. Administrators only.');
+        die('Access denied.');
     }
+}
+
+function require_admin() {
+    require_role('admin');
+}
+
+function require_stock_manager() {
+    require_role('admin', 'stock_manager');
 }
 
 function flash($msg = null, $type = 'success') {
@@ -42,21 +50,28 @@ function money($n) { return CURRENCY . ' ' . number_format((float)$n, 2); }
 
 function page_header($title) {
     $u = $_SESSION;
+    $role = $u['user_role'] ?? '';
+
+    // Full menu with roles allowed to see each item
     $nav = [
-        ['index.php',       'fa-gauge-high',          'Dashboard'],
-        ['customers.php',   'fa-users',               'Customers'],
-        ['vehicles.php',    'fa-car',                 'Vehicles'],
-        ['services.php',    'fa-screwdriver-wrench',  'Services'],
-        ['parts.php',       'fa-gears',               'Spare Parts'],
-        ['invoices.php',    'fa-file-invoice',        'Invoices'],
-        ['suppliers.php',   'fa-truck-field',         'Suppliers'],
-        ['expenses.php',    'fa-money-bill-wave',     'Expenses'],
-        ['reports.php',     'fa-chart-line',          'Reports'],
+        ['index.php',       'fa-gauge-high',          'Dashboard',    ['admin','staff','stock_manager']],
+        ['customers.php',   'fa-users',               'Customers',    ['admin','staff']],
+        ['vehicles.php',    'fa-car',                 'Vehicles',     ['admin','staff','stock_manager']],
+        ['services.php',    'fa-screwdriver-wrench',  'Services',     ['admin','staff']],
+        ['parts.php',       'fa-gears',               'Spare Parts',  ['admin','staff','stock_manager']],
+        ['invoices.php',    'fa-file-invoice',        'Invoices',     ['admin','staff']],
+        ['suppliers.php',   'fa-truck-field',         'Suppliers',    ['admin','staff','stock_manager']],
+        ['expenses.php',    'fa-money-bill-wave',     'Expenses',     ['admin','staff']],
+        ['reports.php',     'fa-chart-line',          'Reports',      ['admin','staff']],
+        ['users.php',       'fa-user-shield',         'Users',        ['admin']],
+        ['technicians.php', 'fa-user-gear',           'Technicians',  ['admin','staff']],
+        ['backup.php',      'fa-database',            'Backup',       ['admin']],
+        ['shifts.php', 'fa-clock', 'Shifts', ['admin','staff','stock_manager']],
     ];
-    if (($u['user_role'] ?? '') === 'admin') {
-        $nav[] = ['users.php',  'fa-user-shield', 'Users'];
-        $nav[] = ['backup.php', 'fa-database',    'Backup'];
-    }
+
+    // Keep only items this role is allowed to see
+    $nav = array_values(array_filter($nav, fn($item) => in_array($role, $item[3], true)));
+
     $cur = basename($_SERVER['PHP_SELF']);
     $flash = flash();
     ?>
@@ -124,7 +139,7 @@ function page_header($title) {
         </div>
         <div class="min-w-0">
           <div class="text-white font-medium text-sm truncate"><?= e($u['user_name'] ?? '') ?></div>
-          <div class="text-gray-400 capitalize text-xs"><i class="fa-solid fa-circle text-[6px] text-green-400 mr-1"></i><?= e($u['user_role'] ?? '') ?></div>
+          <div class="text-gray-400 capitalize text-xs"><i class="fa-solid fa-circle text-[6px] text-green-400 mr-1"></i><?= e(str_replace('_', ' ', $u['user_role'] ?? '')) ?></div>
         </div>
       </div>
       <a href="logout.php"

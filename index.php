@@ -3,30 +3,59 @@ require_once 'includes/functions.php';
 require_once 'config/database.php';
 require_login();
 
+$role = $_SESSION['user_role'] ?? 'staff';
 $today = date('Y-m-d');
+
+// ---- Default values so every card has something to show ----
 $stats = [
-    'customers' => $pdo->query('SELECT COUNT(*) c FROM customers')->fetch()['c'],
-    'vehicles'  => $pdo->query('SELECT COUNT(*) c FROM vehicles')->fetch()['c'],
-    'today_services' => $pdo->prepare('SELECT COUNT(*) c FROM services WHERE service_date = ?'),
-    'pending_invoices' => $pdo->query("SELECT COUNT(*) c FROM invoices WHERE status != 'Paid'")->fetch()['c'],
+    'customers'        => 0,
+    'vehicles'         => 0,
+    'today_services'   => 0,
+    'pending_invoices' => 0,
+    'parts'            => 0,
+    'suppliers'        => 0,
+    'low_count'        => 0,
 ];
-$stats['today_services']->execute([$today]);
-$stats['today_services'] = $stats['today_services']->fetch()['c'];
+$income_today  = 0;
+$expense_month = 0;
 
-$income_today = $pdo->prepare("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE payment_date = ?");
-$income_today->execute([$today]);
-$income_today = $income_today->fetch()['s'];
-
-$expense_month = $pdo->prepare("SELECT COALESCE(SUM(amount),0) s FROM expenses WHERE DATE_FORMAT(expense_date,'%Y-%m') = ?");
-$expense_month->execute([date('Y-m')]);
-$expense_month = $expense_month->fetch()['s'];
-
+// ---- Queries needed by all roles ----
 $low_stock = $pdo->query('SELECT * FROM parts WHERE stock_qty <= min_stock ORDER BY stock_qty ASC LIMIT 10')->fetchAll();
-$recent_invoices = $pdo->query('SELECT i.*, v.reg_no FROM invoices i JOIN vehicles v ON v.id = i.vehicle_id ORDER BY i.id DESC LIMIT 8')->fetchAll();
 $upcoming = $pdo->query('SELECT s.*, v.reg_no, v.make, v.model FROM services s JOIN vehicles v ON v.id = s.vehicle_id WHERE s.next_service_date IS NOT NULL AND s.next_service_date <= DATE_ADD(CURDATE(), INTERVAL 14 DAY) AND s.next_service_date >= CURDATE() ORDER BY s.next_service_date')->fetchAll();
+
+// ---- Extra queries only for admin/staff ----
+$recent_invoices = [];
+if (in_array($role, ['admin', 'staff'], true)) {
+    $stats['customers']        = $pdo->query('SELECT COUNT(*) c FROM customers')->fetch()['c'];
+    $stats['vehicles']         = $pdo->query('SELECT COUNT(*) c FROM vehicles')->fetch()['c'];
+    $stats['pending_invoices'] = $pdo->query("SELECT COUNT(*) c FROM invoices WHERE status != 'Paid'")->fetch()['c'];
+
+    $st = $pdo->prepare('SELECT COUNT(*) c FROM services WHERE service_date = ?');
+    $st->execute([$today]);
+    $stats['today_services'] = $st->fetch()['c'];
+
+    $q = $pdo->prepare("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE payment_date = ?");
+    $q->execute([$today]);
+    $income_today = $q->fetch()['s'];
+
+    $q = $pdo->prepare("SELECT COALESCE(SUM(amount),0) s FROM expenses WHERE DATE_FORMAT(expense_date,'%Y-%m') = ?");
+    $q->execute([date('Y-m')]);
+    $expense_month = $q->fetch()['s'];
+
+    $recent_invoices = $pdo->query('SELECT i.*, v.reg_no FROM invoices i JOIN vehicles v ON v.id = i.vehicle_id ORDER BY i.id DESC LIMIT 8')->fetchAll();
+}
+
+// ---- Extra queries for stock manager ----
+if ($role === 'stock_manager') {
+    $stats['parts']     = $pdo->query('SELECT COUNT(*) c FROM parts')->fetch()['c'];
+    $stats['vehicles']  = $pdo->query('SELECT COUNT(*) c FROM vehicles')->fetch()['c'];
+    $stats['suppliers'] = $pdo->query('SELECT COUNT(*) c FROM suppliers')->fetch()['c'];
+    $stats['low_count'] = $pdo->query('SELECT COUNT(*) c FROM parts WHERE stock_qty <= min_stock')->fetch()['c'];
+}
 
 page_header('Dashboard');
 
+// ---- KPI cards, each with the roles allowed to see it ----
 $cards = [
     [
         'label'    => 'Total Customers',
@@ -35,7 +64,8 @@ $cards = [
         'gradient' => 'from-blue-500 to-blue-600',
         'shadow'   => 'shadow-blue-500/25',
         'bg_glow'  => 'bg-blue-50',
-        'href'     => 'customers.php'
+        'href'     => 'customers.php',
+        'roles'    => ['admin','staff'],
     ],
     [
         'label'    => 'Registered Vehicles',
@@ -44,7 +74,8 @@ $cards = [
         'gradient' => 'from-indigo-500 to-indigo-600',
         'shadow'   => 'shadow-indigo-500/25',
         'bg_glow'  => 'bg-indigo-50',
-        'href'     => 'vehicles.php'
+        'href'     => 'vehicles.php',
+        'roles'    => ['admin','staff','stock_manager'],
     ],
     [
         'label'    => 'Services Today',
@@ -53,7 +84,8 @@ $cards = [
         'gradient' => 'from-emerald-500 to-emerald-600',
         'shadow'   => 'shadow-emerald-500/25',
         'bg_glow'  => 'bg-emerald-50',
-        'href'     => 'services.php'
+        'href'     => 'services.php',
+        'roles'    => ['admin','staff'],
     ],
     [
         'label'    => 'Pending Invoices',
@@ -62,7 +94,8 @@ $cards = [
         'gradient' => 'from-amber-500 to-amber-600',
         'shadow'   => 'shadow-amber-500/25',
         'bg_glow'  => 'bg-amber-50',
-        'href'     => 'invoices.php'
+        'href'     => 'invoices.php',
+        'roles'    => ['admin','staff'],
     ],
     [
         'label'    => "Today's Income",
@@ -71,7 +104,8 @@ $cards = [
         'gradient' => 'from-green-500 to-teal-600',
         'shadow'   => 'shadow-green-500/25',
         'bg_glow'  => 'bg-green-50',
-        'href'     => 'reports.php'
+        'href'     => 'reports.php',
+        'roles'    => ['admin','staff'],
     ],
     [
         'label'    => 'Monthly Expenses',
@@ -80,9 +114,43 @@ $cards = [
         'gradient' => 'from-rose-500 to-rose-600',
         'shadow'   => 'shadow-rose-500/25',
         'bg_glow'  => 'bg-rose-50',
-        'href'     => 'expenses.php'
+        'href'     => 'expenses.php',
+        'roles'    => ['admin'],
+    ],
+    [
+        'label'    => 'Spare Parts',
+        'val'      => number_format($stats['parts'] ?? 0),
+        'icon'     => 'fa-gears',
+        'gradient' => 'from-cyan-500 to-cyan-600',
+        'shadow'   => 'shadow-cyan-500/25',
+        'bg_glow'  => 'bg-cyan-50',
+        'href'     => 'parts.php',
+        'roles'    => ['stock_manager'],
+    ],
+    [
+        'label'    => 'Low Stock Items',
+        'val'      => number_format($stats['low_count'] ?? 0),
+        'icon'     => 'fa-triangle-exclamation',
+        'gradient' => 'from-amber-500 to-orange-600',
+        'shadow'   => 'shadow-amber-500/25',
+        'bg_glow'  => 'bg-amber-50',
+        'href'     => 'parts.php',
+        'roles'    => ['stock_manager'],
+    ],
+    [
+        'label'    => 'Suppliers',
+        'val'      => number_format($stats['suppliers'] ?? 0),
+        'icon'     => 'fa-truck-field',
+        'gradient' => 'from-violet-500 to-violet-600',
+        'shadow'   => 'shadow-violet-500/25',
+        'bg_glow'  => 'bg-violet-50',
+        'href'     => 'suppliers.php',
+        'roles'    => ['stock_manager'],
     ],
 ];
+
+// Keep only cards this role is allowed to see
+$cards = array_values(array_filter($cards, fn($c) => in_array($role, $c['roles'], true)));
 ?>
 
 <!-- Top Sub-Header & Quick Actions -->
@@ -94,6 +162,7 @@ $cards = [
     </p>
   </div>
   <div class="flex flex-wrap items-center gap-2.5">
+    <?php if (in_array($role, ['admin','staff'], true)): ?>
     <a href="customers.php" class="inline-flex items-center gap-2 bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold px-3.5 py-2 rounded-xl shadow-sm transition">
       <i class="fa-solid fa-user-plus text-blue-500"></i> Add Customer
     </a>
@@ -103,6 +172,14 @@ $cards = [
     <a href="invoices.php" class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-sm shadow-indigo-500/20 transition">
       <i class="fa-solid fa-plus"></i> Create Invoice
     </a>
+    <?php else: ?>
+    <a href="parts.php" class="inline-flex items-center gap-2 bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold px-3.5 py-2 rounded-xl shadow-sm transition">
+      <i class="fa-solid fa-gears text-cyan-500"></i> Add Part
+    </a>
+    <a href="suppliers.php" class="inline-flex items-center gap-2 bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold px-3.5 py-2 rounded-xl shadow-sm transition">
+      <i class="fa-solid fa-truck-field text-violet-500"></i> Add Supplier
+    </a>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -261,7 +338,8 @@ $cards = [
   </div>
 </div>
 
-<!-- Recent Invoices Table -->
+<!-- Recent Invoices Table (admin & staff only) -->
+<?php if (in_array($role, ['admin','staff'], true)): ?>
 <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
   <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
     <div class="flex items-center gap-3">
@@ -330,5 +408,6 @@ $cards = [
     </div>
   <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <?php page_footer(); ?>

@@ -18,7 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = (int)($_POST['id'] ?? 0);
     $name = trim($_POST['name']);
     $username = trim($_POST['username']);
-    $role = $_POST['role'] === 'admin' ? 'admin' : 'staff';
+    $role = in_array($_POST['role'] ?? '', ['admin', 'staff', 'stock_manager'], true) ? $_POST['role'] : 'staff';
     try {
         if ($id) {
             if (!empty($_POST['password'])) {
@@ -54,6 +54,7 @@ page_header('User Management');
     <input name="username" required placeholder="Username" value="<?= e($edit['username'] ?? '') ?>" class="w-full border rounded-lg px-3 py-2 text-sm">
     <select name="role" class="w-full border rounded-lg px-3 py-2 text-sm bg-white">
       <option value="staff" <?= ($edit['role'] ?? '') === 'staff' ? 'selected' : '' ?>>Staff</option>
+      <option value="stock_manager" <?= ($edit['role'] ?? '') === 'stock_manager' ? 'selected' : '' ?>>Stock Manager</option>
       <option value="admin" <?= ($edit['role'] ?? '') === 'admin' ? 'selected' : '' ?>>Administrator</option>
     </select>
     <input name="password" type="password" <?= $edit ? '' : 'required' ?> placeholder="<?= $edit ? 'New password (leave blank to keep)' : 'Password' ?>" class="w-full border rounded-lg px-3 py-2 text-sm">
@@ -67,7 +68,7 @@ page_header('User Management');
         <tr class="border-b hover:bg-gray-50">
           <td class="py-2 font-medium"><?= e($u['name']) ?></td>
           <td><?= e($u['username']) ?></td>
-          <td><span class="px-2 py-0.5 rounded-full text-xs <?= $u['role']==='admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600' ?>"><?= e($u['role']) ?></span></td>
+          <td><span class="px-2 py-0.5 rounded-full text-xs <?= $u['role']==='admin' ? 'bg-purple-100 text-purple-700' : ($u['role']==='stock_manager' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600') ?>"><?= e($u['role']) ?></span></td>
           <td class="text-right space-x-2">
             <a href="users.php?edit=<?= $u['id'] ?>" class="text-blue-600"><i class="fa-solid fa-pen"></i></a>
             <?php if ($u['id'] != $_SESSION['user_id']): ?>

@@ -9,6 +9,9 @@ define('TAX_RATE', 10);          // Tax percentage applied on invoices
 define('CURRENCY', 'Rs.');       // Currency symbol
 define('COMPANY_NAME', 'A S Motors');
 
+// Set PHP to Sri Lankan time (UTC+05:30)
+date_default_timezone_set('Asia/Colombo');
+
 try {
     $pdo = new PDO(
         'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
