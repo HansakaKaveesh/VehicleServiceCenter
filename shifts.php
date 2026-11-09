@@ -8,11 +8,11 @@ $uid = (int)$_SESSION['user_id'];
 $today = date('Y-m-d');
 $now = date('H:i:s');
 
-// ---- Handle shift actions (staff & stock_manager only) ----
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($role, ['staff', 'stock_manager'], true)) {
+// ---- Handle shift actions ----
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($role, ['staff', 'stock_manager', 'admin'], true)) {
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'start') {
+    if ($action === 'start' && in_array($role, ['staff', 'stock_manager'], true)) {
         try {
             $pdo->prepare('INSERT INTO shifts (user_id, shift_date, start_time) VALUES (?,?,?)')
                 ->execute([$uid, $today, $now]);
@@ -21,9 +21,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($role, ['staff', 'stock_ma
             flash('You already started a shift today.', 'error');
         }
     } elseif ($action === 'end') {
-        $pdo->prepare('UPDATE shifts SET end_time = ? WHERE user_id = ? AND shift_date = ? AND end_time IS NULL')
-            ->execute([$now, $uid, $today]);
+        $pdo->prepare('UPDATE shifts SET end_time = ?, end_date = ? WHERE user_id = ? AND shift_date = ? AND end_time IS NULL')
+            ->execute([$now, $today, $uid, $today]);
         flash('Shift ended at ' . date('h:i A'));
+    } elseif ($action === 'end_open') {
+        // End any unended shift (admin: anyone's; staff/stock_manager: own only)
+        $shift_id = (int)($_POST['shift_id'] ?? 0);
+        $st = $pdo->prepare('SELECT s.*, u.name FROM shifts s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.end_time IS NULL');
+        $st->execute([$shift_id]);
+        $shift = $st->fetch();
+
+        if (!$shift) {
+            flash('Shift not found or already ended.', 'error');
+        } elseif ($role !== 'admin' && (int)$shift['user_id'] !== $uid) {
+            flash('You can only end your own open shifts.', 'error');
+        } elseif ($shift['shift_date'] === $today) {
+            // Open shift from today: close at the current time
+            $pdo->prepare('UPDATE shifts SET end_time = ?, end_date = ? WHERE id = ? AND end_time IS NULL')
+                ->execute([$now, $today, $shift_id]);
+            flash('Shift for ' . e($shift['name']) . ' ended at ' . date('h:i A'));
+        } else {
+            // Stale open shift from a past day: close at end of that day
+            $pdo->prepare('UPDATE shifts SET end_time = ?, end_date = ? WHERE id = ? AND end_time IS NULL')
+                ->execute(['23:59:59', $shift['shift_date'], $shift_id]);
+            flash('Shift for ' . e($shift['name']) . ' on ' . $shift['shift_date'] . ' closed.');
+        }
     }
     redirect('shifts.php');
 }
@@ -55,12 +77,11 @@ if ($date_from) { $where[] = 's.shift_date >= ?'; $params[] = $date_from; }
 if ($date_to)   { $where[] = 's.shift_date <= ?'; $params[] = $date_to; }
 $where_sql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$sql = "SELECT s.*, u.name, u.role,
-        TIMEDIFF(COALESCE(s.end_time, ?), s.start_time) AS duration
+$sql = "SELECT s.*, u.name, u.role
         FROM shifts s JOIN users u ON u.id = s.user_id
         $where_sql ORDER BY s.shift_date DESC, s.start_time DESC LIMIT 200";
 $st = $pdo->prepare($sql);
-$st->execute(array_merge([$now], $params));
+$st->execute($params);
 $shifts = $st->fetchAll();
 
 $staff_list = $pdo->query("SELECT id, name FROM users WHERE role IN ('staff','stock_manager') ORDER BY name")->fetchAll();
@@ -131,13 +152,21 @@ page_header('Shift Times');
   <table class="w-full text-sm">
     <thead><tr class="text-left text-gray-500 border-b">
       <?php if ($role === 'admin'): ?><th class="py-2">Staff Member</th><?php endif; ?>
-      <th class="py-2">Date</th><th>Start</th><th>End</th><th>Duration</th><th>Status</th>
+      <th class="py-2">Date</th><th>Start</th><th>End</th><th>Duration</th><th>Status</th><th></th>
     </tr></thead>
     <tbody>
-    <?php foreach ($shifts as $s): 
+    <?php foreach ($shifts as $s):
         $open = $s['end_time'] === null;
-        $mins = (int)round(((strtotime($s['shift_date'].' '.($s['end_time'] ?? $now)) - strtotime($s['shift_date'].' '.$s['start_time'])) / 60));
+        // Duration spans midnight if the shift ended on a different date
+        $end_dt = $s['shift_date'] . ' ' . ($open ? $now : $s['end_time']);
+        $start_dt = $s['shift_date'] . ' ' . $s['start_time'];
+        if (!$open && $s['end_date'] && $s['end_date'] !== $s['shift_date']) {
+            $end_dt = $s['end_date'] . ' ' . $s['end_time'];
+        }
+        $mins = (int)max(0, round((strtotime($end_dt) - strtotime($start_dt)) / 60));
         $dur = sprintf('%dh %02dm', intdiv($mins, 60), $mins % 60);
+        $ends_next_day = !$open && $s['end_date'] && $s['end_date'] !== $s['shift_date'];
+        $can_end_open = $open && ($role === 'admin' || (int)$s['user_id'] === $uid);
     ?>
       <tr class="border-b hover:bg-gray-50">
         <?php if ($role === 'admin'): ?>
@@ -148,7 +177,16 @@ page_header('Shift Times');
         <?php endif; ?>
         <td class="py-2"><?= e($s['shift_date']) ?></td>
         <td><?= date('h:i A', strtotime($s['start_time'])) ?></td>
-        <td><?= $open ? '—' : date('h:i A', strtotime($s['end_time'])) ?></td>
+        <td>
+          <?php if ($open): ?>
+            —
+          <?php else: ?>
+            <?= date('h:i A', strtotime($s['end_time'])) ?>
+            <?php if ($ends_next_day): ?>
+              <span class="text-[10px] text-gray-400">(<?= e($s['end_date']) ?>)</span>
+            <?php endif; ?>
+          <?php endif; ?>
+        </td>
         <td class="text-gray-600"><?= $dur ?></td>
         <td>
           <?php if ($open): ?>
@@ -159,10 +197,20 @@ page_header('Shift Times');
           <span class="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">Completed</span>
           <?php endif; ?>
         </td>
+        <td class="py-2 text-right">
+          <?php if ($can_end_open): ?>
+          <form method="post" class="inline" onsubmit="return confirm('End this shift now?')">
+            <input type="hidden" name="shift_id" value="<?= (int)$s['id'] ?>">
+            <button name="action" value="end_open" class="bg-rose-600 hover:bg-rose-700 text-white rounded-lg px-3 py-1 text-xs font-medium">
+              <i class="fa-solid fa-stop mr-1"></i> End
+            </button>
+          </form>
+          <?php endif; ?>
+        </td>
       </tr>
     <?php endforeach; ?>
     <?php if (!$shifts): ?>
-      <tr><td colspan="<?= $role === 'admin' ? 6 : 5 ?>" class="py-6 text-center text-gray-400">No shift records found.</td></tr>
+      <tr><td colspan="<?= $role === 'admin' ? 7 : 6 ?>" class="py-6 text-center text-gray-400">No shift records found.</td></tr>
     <?php endif; ?>
     </tbody>
   </table>

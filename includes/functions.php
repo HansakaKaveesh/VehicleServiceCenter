@@ -56,7 +56,7 @@ function page_header($title) {
     $nav = [
         ['index.php',       'fa-gauge-high',          'Dashboard',    ['admin','staff','stock_manager']],
         ['customers.php',   'fa-users',               'Customers',    ['admin','staff']],
-        ['vehicles.php',    'fa-car',                 'Vehicles',     ['admin','staff','stock_manager']],
+        ['vehicles.php',    'fa-car',                 'Vehicles',     ['admin','staff']],
         ['services.php',    'fa-screwdriver-wrench',  'Services',     ['admin','staff']],
         ['parts.php',       'fa-gears',               'Spare Parts',  ['admin','staff','stock_manager']],
         ['invoices.php',    'fa-file-invoice',        'Invoices',     ['admin','staff']],
