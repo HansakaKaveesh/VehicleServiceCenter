@@ -40,5 +40,8 @@ page_header('Service History - ' . $vehicle['reg_no']);
     </tbody>
   </table>
   <a href="services.php?vehicle_id=<?= $vid ?>" class="inline-block mt-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"><i class="fa-solid fa-plus mr-1"></i> New Service Job</a>
+  <a href="vehicle_history_print.php?vehicle_id=<?= $vid ?>" target="_blank" class="inline-block bg-gray-700 hover:bg-gray-800 text-white text-sm font-medium px-4 py-2 rounded-lg">
+  <i class="fa-solid fa-file-pdf mr-1"></i> Download PDF
+</a>
 </div>
 <?php page_footer(); ?>
