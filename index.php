@@ -53,6 +53,81 @@ if ($role === 'stock_manager') {
     $stats['low_count'] = $pdo->query('SELECT COUNT(*) c FROM parts WHERE stock_qty <= min_stock')->fetch()['c'];
 }
 
+// ============================================================
+// CHART DATA
+// ============================================================
+
+// -- Cash flow: income vs expenses, last 7 days (admin/staff) --
+$cf_labels  = [];
+$cf_income  = [];
+$cf_expense = [];
+
+// -- Service volume: services per month, last 6 months (admin/staff) --
+$sv_labels = [];
+$sv_counts = [];
+
+// -- Invoice status split (admin/staff) --
+$inv_status_labels = [];
+$inv_status_counts = [];
+
+if (in_array($role, ['admin', 'staff'], true)) {
+    $inc = $pdo->query("SELECT payment_date d, COALESCE(SUM(amount),0) s FROM payments WHERE payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY payment_date")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $exp = $pdo->query("SELECT expense_date d, COALESCE(SUM(amount),0) s FROM expenses WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY expense_date")->fetchAll(PDO::FETCH_KEY_PAIR);
+    for ($i = 6; $i >= 0; $i--) {
+        $d = date('Y-m-d', strtotime("-{$i} days"));
+        $cf_labels[]  = date('D j', strtotime($d));
+        $cf_income[]  = (float)($inc[$d] ?? 0);
+        $cf_expense[] = (float)($exp[$d] ?? 0);
+    }
+
+    $svc = $pdo->query("SELECT DATE_FORMAT(service_date, '%Y-%m') m, COUNT(*) c FROM services WHERE service_date >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH) GROUP BY m")->fetchAll(PDO::FETCH_KEY_PAIR);
+    for ($i = 5; $i >= 0; $i--) {
+        $m = date('Y-m', strtotime("first day of -{$i} months"));
+        $sv_labels[] = date('M Y', strtotime($m));
+        $sv_counts[] = (int)($svc[$m] ?? 0);
+    }
+
+    $st = $pdo->query('SELECT status, COUNT(*) c FROM invoices GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $inv_status_labels = array_keys($st);
+    $inv_status_counts = array_map('intval', array_values($st));
+}
+
+// -- Parts by category + top stocked parts (stock manager) --
+$pc_labels = [];
+$pc_counts = [];
+$ps_names  = [];
+$ps_qty    = [];
+
+if ($role === 'stock_manager') {
+    $pc = $pdo->query("SELECT COALESCE(NULLIF(category,''), 'Uncategorized') cat, COUNT(*) c FROM parts GROUP BY cat ORDER BY c DESC LIMIT 8")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $pc_labels = array_keys($pc);
+    $pc_counts = array_map('intval', array_values($pc));
+
+    $ps = $pdo->query('SELECT name, stock_qty FROM parts ORDER BY stock_qty DESC LIMIT 10')->fetchAll();
+    foreach ($ps as $r) {
+        $ps_names[] = $r['name'];
+        $ps_qty[]   = (int)$r['stock_qty'];
+    }
+}
+
+// Helper: safely embed PHP arrays into JavaScript
+function js_array(array $arr): string {
+    return json_encode($arr, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+}
+
+// Map invoice status -> consistent brand color
+function status_color(string $status): string {
+    return match (strtolower($status)) {
+        'paid'            => '#10b981',
+        'partially paid'  => '#3b82f6',
+        'pending'         => '#f59e0b',
+        'overdue'         => '#ef4444',
+        'cancelled'       => '#6b7280',
+        default           => '#8b5cf6',
+    };
+}
+$inv_status_colors = array_map('status_color', $inv_status_labels);
+
 page_header('Dashboard');
 
 // ---- KPI cards, each with the roles allowed to see it ----
@@ -189,7 +264,7 @@ $cards = array_values(array_filter($cards, fn($c) => in_array($role, $c['roles']
   <a href="<?= $c['href'] ?>" class="group relative overflow-hidden bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md hover:border-gray-200 hover:-translate-y-0.5 transition-all duration-200">
     <!-- Decorative corner glow -->
     <div class="absolute -right-6 -top-6 w-24 h-24 rounded-full <?= $c['bg_glow'] ?> opacity-60 group-hover:scale-125 transition-transform duration-300 pointer-events-none"></div>
-    
+
     <div class="relative flex items-center justify-between mb-4">
       <div class="w-11 h-11 rounded-xl bg-gradient-to-br <?= $c['gradient'] ?> text-white shadow-lg <?= $c['shadow'] ?> flex items-center justify-center">
         <i class="fa-solid <?= $c['icon'] ?> text-lg"></i>
@@ -207,9 +282,101 @@ $cards = array_values(array_filter($cards, fn($c) => in_array($role, $c['roles']
   <?php endforeach; ?>
 </div>
 
+<!-- ===================== CHARTS ===================== -->
+<?php if (in_array($role, ['admin','staff'], true)): ?>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+
+  <!-- Cash Flow: Income vs Expenses (last 7 days) -->
+  <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
+          <i class="fa-solid fa-chart-line"></i>
+        </div>
+        <div>
+          <h2 class="font-bold text-gray-800 text-sm">Cash Flow</h2>
+          <p class="text-xs text-gray-400">Income vs expenses — last 7 days</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4 text-xs font-medium text-gray-500">
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>Income</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>Expenses</span>
+      </div>
+    </div>
+    <div class="p-6 flex-1"><div class="h-64"><canvas id="cashFlowChart"></canvas></div></div>
+  </div>
+
+  <!-- Invoice Status split -->
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
+          <i class="fa-solid fa-chart-pie"></i>
+        </div>
+        <div>
+          <h2 class="font-bold text-gray-800 text-sm">Invoice Status</h2>
+          <p class="text-xs text-gray-400">All-time split by status</p>
+        </div>
+      </div>
+    </div>
+    <div class="p-6 flex-1 flex items-center justify-center"><div class="h-64 w-full"><canvas id="invoiceStatusChart"></canvas></div></div>
+  </div>
+
+  <!-- Service volume: last 6 months -->
+  <div class="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+          <i class="fa-solid fa-chart-column"></i>
+        </div>
+        <div>
+          <h2 class="font-bold text-gray-800 text-sm">Service Volume</h2>
+          <p class="text-xs text-gray-400">Completed services per month — last 6 months</p>
+        </div>
+      </div>
+    </div>
+    <div class="p-6"><div class="h-56"><canvas id="serviceVolumeChart"></canvas></div></div>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if ($role === 'stock_manager'): ?>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+
+  <!-- Parts by category -->
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-cyan-50 text-cyan-600 flex items-center justify-center">
+        <i class="fa-solid fa-chart-pie"></i>
+      </div>
+      <div>
+        <h2 class="font-bold text-gray-800 text-sm">Parts by Category</h2>
+        <p class="text-xs text-gray-400">Inventory distribution</p>
+      </div>
+    </div>
+    <div class="p-6 flex-1 flex items-center justify-center"><div class="h-64 w-full"><canvas id="partsCategoryChart"></canvas></div></div>
+  </div>
+
+  <!-- Top 10 stocked parts -->
+  <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+    <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
+        <i class="fa-solid fa-chart-bar"></i>
+      </div>
+      <div>
+        <h2 class="font-bold text-gray-800 text-sm">Top Stocked Parts</h2>
+        <p class="text-xs text-gray-400">10 parts with the highest quantity on hand</p>
+      </div>
+    </div>
+    <div class="p-6 flex-1"><div class="h-64"><canvas id="partsStockChart"></canvas></div></div>
+  </div>
+</div>
+<?php endif; ?>
+<!-- =================== END CHARTS =================== -->
+
 <!-- Alerts & Reminders Grid -->
 <div class="grid lg:grid-cols-2 gap-6 mb-8">
-  
+
   <!-- Low Stock Alerts -->
   <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
     <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -408,6 +575,208 @@ $cards = array_values(array_filter($cards, fn($c) => in_array($role, $c['roles']
     </div>
   <?php endif; ?>
 </div>
+<?php endif; ?>
+
+<!-- ===================== CHART SCRIPTS ===================== -->
+<?php if (in_array($role, ['admin','staff'], true) || $role === 'stock_manager'): ?>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Currency symbol taken from your existing money() function (assumes prefix, e.g. "Rs 1,234.56")
+  const currencyPrefix = '<?= trim(preg_replace('/[0-9.,\s]/u', '', money(0))) ?>';
+  const moneyFmt = v => currencyPrefix + ' ' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  Chart.defaults.font.family = 'inherit';
+  Chart.defaults.color = '#9ca3af';
+  Chart.defaults.borderColor = 'rgba(229, 231, 235, 0.7)';
+
+  const tooltipBase = {
+    backgroundColor: '#1f2937',
+    titleFont: { weight: '700' },
+    padding: 10,
+    cornerRadius: 8,
+    boxPadding: 4,
+  };
+
+  // ---------- Cash flow: income vs expenses (last 7 days) ----------
+  const cfEl = document.getElementById('cashFlowChart');
+  if (cfEl) {
+    const ctx = cfEl.getContext('2d');
+    const grad = (hex, alphaTop) => {
+      const g = ctx.createLinearGradient(0, 0, 0, 260);
+      g.addColorStop(0, hex + alphaTop);
+      g.addColorStop(1, hex + '00');
+      return g;
+    };
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: <?= js_array($cf_labels) ?>,
+        datasets: [
+          {
+            label: 'Income',
+            data: <?= js_array($cf_income) ?>,
+            borderColor: '#10b981',
+            backgroundColor: grad('#10b981', '33'),
+            fill: true,
+            tension: 0.4,
+            borderWidth: 2.5,
+            pointRadius: 3,
+            pointBackgroundColor: '#10b981',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1.5,
+          },
+          {
+            label: 'Expenses',
+            data: <?= js_array($cf_expense) ?>,
+            borderColor: '#f43f5e',
+            backgroundColor: grad('#f43f5e', '26'),
+            fill: true,
+            tension: 0.4,
+            borderWidth: 2.5,
+            pointRadius: 3,
+            pointBackgroundColor: '#f43f5e',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1.5,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { ...tooltipBase, callbacks: { label: c => ` ${c.dataset.label}: ${moneyFmt(c.parsed.y)}` } },
+        },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => currencyPrefix + ' ' + Number(v).toLocaleString() }, grid: { drawBorder: false } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  // ---------- Invoice status doughnut ----------
+  const stEl = document.getElementById('invoiceStatusChart');
+  if (stEl) {
+    new Chart(stEl, {
+      type: 'doughnut',
+      data: {
+        labels: <?= js_array($inv_status_labels) ?>,
+        datasets: [{
+          data: <?= js_array($inv_status_counts) ?>,
+          backgroundColor: <?= js_array($inv_status_colors) ?>,
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '62%',
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', padding: 14, font: { size: 11 } } },
+          tooltip: { ...tooltipBase, callbacks: { label: c => ` ${c.label}: ${c.parsed} invoice${c.parsed === 1 ? '' : 's'}` } },
+        },
+      },
+    });
+  }
+
+  // ---------- Service volume: services per month (last 6 months) ----------
+  const svEl = document.getElementById('serviceVolumeChart');
+  if (svEl) {
+    new Chart(svEl, {
+      type: 'bar',
+      data: {
+        labels: <?= js_array($sv_labels) ?>,
+        datasets: [{
+          label: 'Services',
+          data: <?= js_array($sv_counts) ?>,
+          backgroundColor: 'rgba(99, 102, 241, 0.85)',
+          hoverBackgroundColor: '#4f46e5',
+          borderRadius: 8,
+          borderSkipped: false,
+          maxBarThickness: 56,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { ...tooltipBase, callbacks: { label: c => ` ${c.parsed.y} service${c.parsed.y === 1 ? '' : 's'}` } },
+        },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { drawBorder: false } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  // ---------- Stock manager: parts by category ----------
+  const pcEl = document.getElementById('partsCategoryChart');
+  if (pcEl) {
+    new Chart(pcEl, {
+      type: 'doughnut',
+      data: {
+        labels: <?= js_array($pc_labels) ?>,
+        datasets: [{
+          data: <?= js_array($pc_counts) ?>,
+          backgroundColor: ['#06b6d4', '#8b5cf6', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6', '#ec4899', '#64748b'],
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '55%',
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', padding: 12, font: { size: 11 } } },
+          tooltip: { ...tooltipBase, callbacks: { label: c => ` ${c.label}: ${c.parsed} part${c.parsed === 1 ? '' : 's'}` } },
+        },
+      },
+    });
+  }
+
+  // ---------- Stock manager: top 10 stocked parts ----------
+  const psEl = document.getElementById('partsStockChart');
+  if (psEl) {
+    new Chart(psEl, {
+      type: 'bar',
+      data: {
+        labels: <?= js_array($ps_names) ?>,
+        datasets: [{
+          label: 'Qty in stock',
+          data: <?= js_array($ps_qty) ?>,
+          backgroundColor: 'rgba(139, 92, 246, 0.8)',
+          hoverBackgroundColor: '#7c3aed',
+          borderRadius: 6,
+          borderSkipped: false,
+          maxBarThickness: 22,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: tooltipBase,
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { drawBorder: false } },
+          y: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        },
+      },
+    });
+  }
+});
+</script>
 <?php endif; ?>
 
 <?php page_footer(); ?>
