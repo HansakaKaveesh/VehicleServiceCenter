@@ -100,14 +100,19 @@ page_header('Create Invoice');
   #partsTable select:focus, #partsTable input:focus {
     border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.15); outline: none;
   }
-  .stock-badge { font-size: 11px; padding: 2px 8px; border-radius: 9999px; font-weight: 600; }
+  .stock-badge { font-size: 11px; padding: 2px 8px; border-radius: 9999px; font-weight: 600; white-space: nowrap; }
   .stock-ok   { background: #dcfce7; color: #166534; }
   .stock-low  { background: #fef9c3; color: #854d0e; }
   .stock-out  { background: #fee2e2; color: #991b1b; }
   .row-warn   { background: #fff7ed !important; }
-  .currency::before { content: "$"; opacity: .45; margin-right: 2px; }
+  .currency::before { content: "Rs. "; opacity: .45; margin-right: 2px; font-weight: 500; }
+  .currency-lg::before { content: "Rs. "; font-weight: 600; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   #partsTable tbody tr { animation: fadeIn .25s ease; }
+  .shake { animation: shake .3s; }
+  @keyframes shake { 0%,100%{transform:none} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+  #partSearch::placeholder { color: #9ca3af; }
+  select option:disabled { color: #c2410c; background: #fff7ed; }
 </style>
 
 <form method="post" class="grid lg:grid-cols-3 gap-6" id="invForm" novalidate>
@@ -120,7 +125,7 @@ page_header('Create Invoice');
       </div>
       <input type="hidden" name="service_id" value="<?= e($service['id'] ?? '') ?>">
 
-      <label class="block text-xs font-medium text-gray-500">Vehicle / Customer</label>
+      <label class="block text-xs font-medium text-gray-500">Vehicle / Customer <span class="text-red-500">*</span></label>
       <select name="vehicle_id" id="vehicleSel" required
               class="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none">
         <option value="">-- Select Vehicle --</option>
@@ -130,21 +135,21 @@ page_header('Create Invoice');
         </option>
         <?php endforeach; ?>
       </select>
-      <p id="vehicleHint" class="text-xs text-gray-400 hidden"><i class="fa-solid fa-circle-check text-green-600 mr-1"></i>Vehicle selected.</p>
+      <p id="vehicleHint" class="text-xs text-gray-400 <?= ($service || !empty($_GET['vehicle_id'])) ? '' : 'hidden' ?>"><i class="fa-solid fa-circle-check text-green-600 mr-1"></i>Vehicle selected.</p>
 
-      <label class="block text-xs font-medium text-gray-500">Invoice Date</label>
+      <label class="block text-xs font-medium text-gray-500">Invoice Date <span class="text-red-500">*</span></label>
       <input name="invoice_date" type="date" required value="<?= date('Y-m-d') ?>"
              class="w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none">
 
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs font-medium text-gray-500">Labor Charge</label>
+          <label class="block text-xs font-medium text-gray-500">Labor Charge (Rs.)</label>
           <input name="labor_charge" id="labor" type="number" step="0.01" min="0" placeholder="0.00"
                  value="<?= e($service['labor_charge'] ?? '') ?>"
                  class="w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none" oninput="calc()">
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-500">Discount</label>
+          <label class="block text-xs font-medium text-gray-500">Discount (Rs.)</label>
           <input name="discount" id="discount" type="number" step="0.01" min="0" placeholder="0.00" value="0"
                  class="w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none" oninput="calc()">
         </div>
@@ -167,6 +172,7 @@ page_header('Create Invoice');
               class="w-full mt-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg py-2.5 text-sm font-medium transition">
         <i class="fa-solid fa-file-invoice mr-1"></i> Generate Invoice
       </button>
+      <p class="text-[11px] text-gray-400 text-center"><kbd class="border rounded px-1 bg-gray-50">Ctrl</kbd> + <kbd class="border rounded px-1 bg-gray-50">Enter</kbd> to generate</p>
     </div>
   </div>
 
@@ -183,17 +189,25 @@ page_header('Create Invoice');
       </button>
     </div>
 
-    <div class="mb-3">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
       <input id="partSearch" type="text" placeholder="🔍 Filter parts list (type to search)…"
-             class="w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+             class="flex-1 min-w-[220px] border rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
              oninput="filterOptions(this.value)">
+      <span class="text-xs text-gray-400">Tip: a new row is added automatically when you pick a part in the last row.</span>
     </div>
 
     <table class="w-full text-sm" id="partsTable">
       <thead><tr class="text-left text-gray-500 border-b">
-        <th class="py-2 w-1/2">Part</th><th>Qty</th><th>Unit Price</th><th class="text-right">Amount</th><th></th>
+        <th class="py-2 w-1/2">Part</th><th>Qty</th><th>Unit Price (Rs.)</th><th class="text-right">Amount (Rs.)</th><th></th>
       </tr></thead>
       <tbody></tbody>
+      <tfoot>
+        <tr class="border-t font-semibold text-gray-700">
+          <td colspan="3" class="py-2 text-right pr-2">Parts subtotal</td>
+          <td class="text-right currency" id="footParts">0.00</td>
+          <td></td>
+        </tr>
+      </tfoot>
     </table>
 
     <p class="text-xs text-gray-400 mt-3">
@@ -209,7 +223,7 @@ const TAX   = <?= (int)TAX_RATE ?>;
 let idx = 0;
 
 /* ---------- helpers ---------- */
-const fmt = n => n.toFixed(2);
+const fmt = n => (Math.round(n * 100) / 100).toFixed(2);
 
 function stockBadge(stock) {
   if (stock <= 0) return `<span class="stock-badge stock-out">out of stock</span>`;
@@ -217,12 +231,17 @@ function stockBadge(stock) {
   return `<span class="stock-badge stock-ok">stock: ${stock}</span>`;
 }
 
+function partLabel(p) {
+  const suffix = p.stock_qty <= 0 ? ' — OUT OF STOCK' : (p.stock_qty <= 5 ? ` — only ${p.stock_qty} left` : '');
+  return `${p.name} (${p.part_no || '-'})${suffix}`;
+}
+
 /* ---------- add a part row ---------- */
 function addRow(prefillPartId = null, prefillQty = 1) {
   idx++;
   const options = parts.map(p =>
     `<option value="${p.id}" data-price="${p.unit_price}" data-stock="${p.stock_qty}" ${p.stock_qty<=0?'disabled':''}>
-       ${p.name} (${p.part_no||'-'})${p.stock_qty<=0?' — OUT OF STOCK':''}
+       ${partLabel(p)}
      </option>`).join('');
   const row = document.createElement('tr');
   row.className = 'border-b';
@@ -259,7 +278,24 @@ function pickPart(sel) {
   const row = sel.closest('tr');
   if (opt && opt.dataset.price) {
     row.querySelector('[name="unit_price[]"]').value = opt.dataset.price;
-    row.querySelector('[name="qty[]"]').max = opt.dataset.stock;   // hint for browser UI
+    const qtyInput = row.querySelector('[name="qty[]"]');
+    qtyInput.max = opt.dataset.stock;                 // hint for browser UI
+    // clamp qty to available stock
+    if (parseInt(qtyInput.value) > parseInt(opt.dataset.stock)) {
+      qtyInput.value = opt.dataset.stock;
+      qtyInput.classList.add('shake');
+      setTimeout(() => qtyInput.classList.remove('shake'), 350);
+    }
+    qtyInput.focus();
+    qtyInput.select();
+  }
+  // auto-add an empty row when the last row gets a part — no manual clicking needed
+  const rows = document.querySelectorAll('#partsTable tbody tr');
+  const last = rows[rows.length - 1];
+  if (sel.value && last === row && [...rows].every(r =>
+      r.querySelector('[name="part_id[]"]').value)) {
+    addRow();
+    const newSel = last.nextElementSibling?.querySelector('select');
   }
   calc();
 }
@@ -283,7 +319,7 @@ function calc() {
       const stock = parseInt(opt.dataset.stock);
       if (qty > stock) {
         tr.classList.add('row-warn');
-        problems.push(`${sel.selectedOptions[0].text.split('(')[0].trim()}: only ${stock} in stock`);
+        problems.push(`${opt.textContent.split('(')[0].trim()}: only ${stock} in stock`);
       } else {
         tr.classList.remove('row-warn');
       }
@@ -302,6 +338,9 @@ function calc() {
   document.getElementById('showTax').textContent   = fmt(tax);
   document.getElementById('showGrand').textContent = fmt(grand);
 
+  const foot = document.getElementById('footParts');
+  if (foot) foot.textContent = fmt(partsTotal);
+
   // surface inline problems instead of letting the user fail at submit
   const errBox = document.getElementById('formError');
   if (problems.length) {
@@ -316,7 +355,6 @@ function calc() {
 function filterOptions(q) {
   q = q.toLowerCase();
   document.querySelectorAll('#partsTable tbody tr select').forEach(sel => {
-    const current = sel.value;
     [...sel.options].forEach(opt => {
       if (!opt.value) return;                       // keep the "-- select --" placeholder
       opt.hidden = q && !opt.textContent.toLowerCase().includes(q);
@@ -329,7 +367,8 @@ document.getElementById('invForm').addEventListener('submit', function (e) {
   const vehicle = document.getElementById('vehicleSel');
   if (!vehicle.value) {
     e.preventDefault();
-    vehicle.classList.add('border-red-500');
+    vehicle.classList.add('border-red-500', 'shake');
+    setTimeout(() => vehicle.classList.remove('shake'), 350);
     vehicle.focus();
     vehicle.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
@@ -344,9 +383,23 @@ document.getElementById('invForm').addEventListener('submit', function (e) {
     alert('Duplicate part lines: ' + dup.join(', ') + '\nPlease merge them into one line.');
     return;
   }
+  // block submit if any stock warnings exist
+  if (!document.getElementById('formError').classList.contains('hidden')) {
+    e.preventDefault();
+    alert('Please fix the stock warnings before generating the invoice.');
+    return;
+  }
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
   btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Creating invoice…';
+});
+
+// Ctrl/Cmd + Enter shortcut to submit
+document.addEventListener('keydown', function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('submitBtn').click();
+  }
 });
 
 // show a friendly hint once a vehicle is picked
